@@ -1,0 +1,89 @@
+/* --- Base Styles --- */
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f7f7f7;
+    margin: 0;
+}
+
+/* Custom shadow and background for main content cards */
+.main-card {
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    background-color: white;
+}
+
+/* --- Navigation Styles --- */
+.nav-link {
+    transition: all 0.2s;
+    cursor: pointer;
+    padding-bottom: 5px; /* Space for the border */
+}
+
+.nav-link:hover {
+    color: #4f46e5; /* Indigo 600 */
+}
+
+.nav-link.active {
+    border-bottom: 3px solid #10b981; /* Emerald 500 */
+    color: #10b981;
+    font-weight: 600;
+}
+
+/* --- XAI Visualization Styles (Grad-CAM Simulation) --- */
+.xai-overlay-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* This simulates the Grad-CAM heatmap visualization */
+.xai-overlay {
+    /* Absolute positioning over the image */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    
+    /* Radial gradient to highlight a central "disease" area */
+    background: radial-gradient(circle at 60% 70%, 
+        rgba(255, 0, 0, 0.5) 0%, /* Max redness in the center */
+        rgba(255, 165, 0, 0.2) 35%, /* Orange fade */
+        transparent 70% /* Fade to clear */
+    );
+    
+    /* Blending mode to make it look like a heatmap over the X-ray */
+    mix-blend-mode: multiply;
+    
+    /* Default transparency */
+    opacity: 0;
+    transition: opacity 0.5s ease-in-out;
+    pointer-events: none; /* Allows clicks to pass through to the image */
+}
+
+.xai-overlay.active {
+    opacity: 1; /* Show the heatmap when active */
+}
+
+/* --- Modal Animation (Enhanced UX) --- */
+#modal.hidden {
+    display: none;
+    opacity: 0;
+}
+
+#modal {
+    opacity: 1;
+}
+
+#modal.hidden #modal-content {
+    transform: scale(0.95);
+    opacity: 0;
+}
+
+#modal #modal-content {
+    transform: scale(1);
+    opacity: 1;
+    transition: all 0.3s ease-out;
+}

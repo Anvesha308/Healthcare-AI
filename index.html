@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HDA: Healthcare Diagnosis Assistant</title>
+    <!-- Load Tailwind CSS for utility classes -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter font for clean, modern look -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Link to custom styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Main Application Container -->
+    <div id="app" class="min-h-screen p-4 md:p-8">
+        <header class="mb-8 main-card rounded-xl p-4 md:p-6 flex flex-col md:flex-row justify-between items-center shadow-lg">
+            <h1 class="text-2xl font-bold text-gray-800 mb-4 md:mb-0">AI Healthcare Diagnosis Assistant</h1>
+            <nav class="flex space-x-6 text-lg text-gray-500">
+                <div id="nav-info" class="nav-link active" data-page="info">Home</div>
+                <div id="nav-home" class="nav-link" data-page="home">Dashboard</div>
+                <div id="nav-report" class="nav-link" data-page="report">Patient Report</div>
+            </nav>
+        </header>
+
+        <!-- Dynamic Content Area -->
+        <main id="content" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Content will be dynamically injected by script.js -->
+        </main>
+
+        <!-- Custom Modal for Alerts/Messages -->
+        <div id="modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
+            <div class="bg-white rounded-xl p-6 w-full max-w-sm main-card transform transition-transform duration-300 scale-95 opacity-0" id="modal-content">
+                <h3 id="modal-title" class="text-xl font-semibold mb-3 text-red-600"></h3>
+                <p id="modal-message" class="text-gray-700 mb-4"></p>
+                <button id="modal-close-btn" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Link to JavaScript file -->
+    <script src="script.js"></script>
+</body>
+</html>
