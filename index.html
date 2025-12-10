@@ -3,38 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HDA: Healthcare Diagnosis Assistant</title>
+    <title>HDA: Your AI-Powered Health Diagnosis Assistant</title>
     <!-- Load Tailwind CSS for utility classes -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Inter font for clean, modern look -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Inter font (Clean, Professional) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <!-- Load Phosphor Icons for high-quality, lightweight icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1/dist/umd/phosphor.js"></script>
     <!-- Link to custom styles -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <!-- Main Application Container -->
-    <div id="app" class="min-h-screen p-4 md:p-8">
-        <header class="mb-8 main-card rounded-xl p-4 md:p-6 flex flex-col md:flex-row justify-between items-center shadow-lg">
-            <h1 class="text-2xl font-bold text-gray-800 mb-4 md:mb-0">AI Healthcare Diagnosis Assistant</h1>
-            <nav class="flex space-x-6 text-lg text-gray-500">
-                <div id="nav-info" class="nav-link active" data-page="info">Home</div>
-                <div id="nav-home" class="nav-link" data-page="home">Dashboard</div>
-                <div id="nav-report" class="nav-link" data-page="report">Patient Report</div>
-            </nav>
+    <div id="app" class="min-h-screen">
+
+        <!-- 1. TOP STICKY NAVIGATION (Desktop/Tablet) -->
+        <header class="sticky top-0 z-40 main-card shadow-lg">
+            <div class="max-w-7xl mx-auto p-4 md:p-6 flex justify-between items-center">
+                <h1 class="text-2xl font-extrabold text-[#333333]">
+                    <i class="ph ph-heartbeat text-[#36C2A3] mr-2"></i>HDA
+                </h1>
+                <nav class="hidden md:flex space-x-8 text-md font-semibold text-gray-600">
+                    <div id="nav-info" class="nav-link active" data-page="info">Home</div>
+                    <div id="nav-home" class="nav-link" data-page="home">Start Diagnosis</div>
+                    <div id="nav-library" class="nav-link" data-page="library">Health Library</div>
+                </nav>
+            </div>
         </header>
 
-        <!-- Dynamic Content Area -->
-        <main id="content" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- 2. DYNAMIC CONTENT AREA -->
+        <main id="content" class="max-w-7xl mx-auto p-4 md:p-8 relative">
             <!-- Content will be dynamically injected by script.js -->
         </main>
+        
+        <!-- 3. AI CHAT FLOATING BUBBLE -->
+        <div id="chat-bubble" class="fixed bottom-24 right-6 z-30 transition-all duration-500 hidden md:block">
+            <button onclick="toggleChat(true)" class="w-16 h-16 bg-[#4A90E2] text-white rounded-full shadow-2xl flex items-center justify-center transform hover:scale-110 transition-transform duration-300">
+                <i class="ph ph-chats text-3xl"></i>
+            </button>
+        </div>
 
-        <!-- Custom Modal for Alerts/Messages -->
+        <!-- 4. AI CHAT CONTAINER (Right Side) -->
+        <div id="ai-chat-container" class="fixed bottom-0 right-0 top-0 md:top-auto md:h-2/3 w-full md:w-96 bg-white shadow-2xl z-50 border-l-4 border-[#36C2A3] transform translate-x-full transition-transform duration-500 rounded-t-xl md:rounded-l-xl md:rounded-t-none">
+            <!-- Chat content will be rendered here -->
+        </div>
+
+        <!-- 5. BOTTOM NAVIGATION (Mobile Only) -->
+        <div class="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 md:hidden z-40 shadow-2xl">
+            <nav class="flex justify-around text-xs text-gray-600 font-semibold">
+                <div id="nav-mobile-info" class="mobile-nav-link active" data-page="info">
+                    <i class="ph ph-house text-xl"></i><span>Home</span>
+                </div>
+                <div id="nav-mobile-home" class="mobile-nav-link" data-page="home">
+                    <i class="ph ph-clipboard-text text-xl"></i><span>Diagnosis</span>
+                </div>
+                <div id="nav-mobile-library" class="mobile-nav-link" data-page="library">
+                    <i class="ph ph-book-open-text text-xl"></i><span>Library</span>
+                </div>
+                <div id="nav-mobile-chat" class="mobile-nav-link" onclick="toggleChat(true)">
+                    <i class="ph ph-chats text-xl"></i><span>Chat</span>
+                </div>
+            </nav>
+        </div>
+
+        <!-- 6. FOOTER (Trust Signals) -->
+        <footer class="max-w-7xl mx-auto p-8 text-center text-sm text-gray-500 border-t mt-12 mb-20 md:mb-0">
+            <p class="mb-2">🛡️ HIPAA/GDPR Compliant Principles | Privacy Policy | Terms of Service</p>
+            <p class="text-xs italic leading-relaxed">
+                **Disclaimer:** This AI assistant is not a substitute for professional medical advice, diagnosis, or treatment. Always seek the advice of a qualified health provider with any questions you may have regarding a medical condition.
+            </p>
+        </footer>
+
+        <!-- 7. CUSTOM MODAL -->
         <div id="modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
             <div class="bg-white rounded-xl p-6 w-full max-w-sm main-card transform transition-transform duration-300 scale-95 opacity-0" id="modal-content">
                 <h3 id="modal-title" class="text-xl font-semibold mb-3 text-red-600"></h3>
                 <p id="modal-message" class="text-gray-700 mb-4"></p>
-                <button id="modal-close-btn" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                <button id="modal-close-btn" class="w-full bg-[#36C2A3] hover:bg-emerald-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
                     Close
                 </button>
             </div>

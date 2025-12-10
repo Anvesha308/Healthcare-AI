@@ -1,21 +1,45 @@
 // --- GLOBAL STATE ---
 let diagnosisResult = null;
 let selectedFile = null;
+let currentPage = 'info';
+let chatHistory = [];
+let wizardStep = 1; // 1: Symptoms, 2: Severity, 3: Questions, 4: Results
+let diagnosisData = {
+    symptoms: [],
+    severity: 5,
+    additional: { fever: false, fatigue: false, pain: false }
+};
 
 // --- DOM ELEMENTS ---
 const contentDiv = document.getElementById('content');
 const navLinks = document.querySelectorAll('.nav-link');
+const mobileNavLinks = document.querySelectorAll('.mobile-nav-link');
 const modal = document.getElementById('modal');
 const modalCloseBtn = document.getElementById('modal-close-btn');
+const chatContainer = document.getElementById('ai-chat-container');
+const chatBubble = document.getElementById('chat-bubble');
+
+// --- CONSTANTS / PALETTE ---
+const COLORS = {
+    primary: '#4A90E2', 
+    secondary: '#36C2A3', 
+    accent: '#FFC48F'
+};
+
+// --- WIZARD DATA ---
+const WIZARD_QUESTIONS = [
+    { key: 'fever', text: 'Have you experienced a fever above 100.4°F (38°C) in the last 24 hours?' },
+    { key: 'fatigue', text: 'Do you feel unusual or persistent fatigue/weakness?' },
+    { key: 'pain', text: 'Are you experiencing any specific localized pain (e.g., chest, joints)?' },
+];
+
+const SUGGESTED_SYMPTOMS = ['Cough', 'Dizziness', 'Shortness of Breath', 'Headache', 'Nausea', 'Chest Pain'];
+
 
 // --- UTILITY FUNCTIONS ---
 
 /**
- * Simulates a custom alert box instead of using window.alert()
- * Uses CSS transitions for a smooth appearance.
- * @param {string} title - The title of the alert.
- * @param {string} message - The message content.
- * @param {string} type - 'success' or 'error'.
+ * Simulates a custom alert box instead of using window.alert().
  */
 function showModal(title, message, type = 'error') {
     const modalTitle = document.getElementById('modal-title');
@@ -24,25 +48,15 @@ function showModal(title, message, type = 'error') {
     modalTitle.textContent = title;
     modalMessage.textContent = message;
     
-    // Set title color based on type
-    if (type === 'success') {
-        modalTitle.classList.remove('text-red-600');
-        modalTitle.classList.add('text-emerald-600');
-    } else {
-        modalTitle.classList.remove('text-emerald-600');
-        modalTitle.classList.add('text-red-600');
-    }
+    modalTitle.style.color = type === 'success' ? COLORS.secondary : 'red';
+    document.getElementById('modal-content').querySelector('button').style.backgroundColor = COLORS.secondary;
 
     modal.classList.remove('hidden');
-    // For CSS transition effect
     setTimeout(() => {
         document.getElementById('modal-content').classList.remove('scale-95', 'opacity-0');
     }, 50);
 }
 
-/**
- * Closes the custom modal.
- */
 function closeModal() {
     document.getElementById('modal-content').classList.add('scale-95', 'opacity-0');
     setTimeout(() => {
@@ -51,210 +65,492 @@ function closeModal() {
 }
 
 /**
- * Simulates the ML model inference and XAI generation.
- * @param {string} dataType - 'image' or 'ecg'.
- * @returns {object} Simulated diagnosis data.
+ * Toggles the visibility of the AI Chat Container.
  */
-function runDiagnosis(dataType) {
-    const disease = dataType === 'image' ? 'Pneumonia/Tumor' : 'Cardiac Arrhythmia';
-    // Base confidence is lower if no file was truly selected, reinforcing the need for data
-    const confidenceModifier = selectedFile ? 1 : 0.8; 
-    const confidence = (Math.random() * (0.99 - 0.75) + 0.75) * confidenceModifier * 100;
-    const isPositive = confidence > 85;
+function toggleChat(show) {
+    if (show === undefined) {
+        show = chatContainer.classList.contains('translate-x-full');
+    }
 
-    return {
-        timestamp: new Date().toLocaleTimeString(),
-        patientId: 'P' + Math.floor(Math.random() * 9000 + 1000),
-        dataType: dataType,
-        diagnosis: isPositive ? `${disease} Detected` : `No ${disease} Detected`,
-        confidence: confidence.toFixed(1) + '%',
-        explanation: dataType === 'image' 
-            ? `Grad-CAM analysis highlights the specific density changes in the lower right lung field, consistent with infiltration.`
-            : `SHAP analysis shows a significant positive contribution from the QRS complex duration and T-wave amplitude (Feature set X), indicating ventricular irregularity.`,
-        isPositive: isPositive,
-        xaiFocus: dataType === 'image' ? (isPositive ? 'Lung Lobe' : 'Normal') : 'Features'
-    };
+    if (show) {
+        chatContainer.classList.remove('translate-x-full');
+        chatBubble.classList.add('hidden');
+        renderChatUI();
+    } else {
+        chatContainer.classList.add('translate-x-full');
+        chatBubble.classList.remove('hidden');
+    }
 }
 
-// --- RENDERING FUNCTIONS ---
+/**
+ * Handles navigation, updates active links, and renders the correct page.
+ * Retired "about" and "contact" pages are removed.
+ * @param {string} page - The page to navigate to ('info', 'home', 'library', etc.).
+ */
+function navigateTo(page) {
+    currentPage = page;
+    
+    // 1. Update desktop navigation bar active state
+    navLinks.forEach(link => {
+        link.classList.toggle('active', link.dataset.page === page);
+    });
+
+    // 2. Update mobile navigation bar active state
+    mobileNavLinks.forEach(link => {
+        if (link.dataset.page) { // Exclude chat link
+            link.classList.toggle('active', link.dataset.page === page);
+        }
+    });
+    
+    // 3. Render the correct page content
+    if (page === 'info') {
+        renderInfoPage();
+    } else if (page === 'home') {
+        // Reset wizard state on entering the diagnosis page
+        wizardStep = 1;
+        diagnosisData = { symptoms: [], severity: 5, additional: { fever: false, fatigue: false, pain: false } };
+        renderDiagnosisWizard();
+    } else if (page === 'library') {
+        renderHealthLibrary();
+    } else if (page === 'results') {
+        renderResultsPage();
+    } else {
+        // Handle pages retired from the navigation (e.g., 'profile' from mobile)
+        contentDiv.className = 'py-20';
+        contentDiv.innerHTML = `<div class="main-card p-10 rounded-xl text-center shadow-xl"><h2 class="text-3xl font-bold text-gray-800">Page Not Found</h2><p class="mt-4 text-gray-600">The requested page is not part of the current navigation structure.</p><button class="mt-6 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200" onclick="navigateTo('info')">Back Home</button></div>`;
+    }
+}
+
+
+// --- PAGE RENDERING ---
 
 /**
- * Renders the Home/Info Page (Interactive, Icon-Driven).
+ * Renders the Home/Info Page (Attractive, Innovative Design).
  */
 function renderInfoPage() {
-    contentDiv.className = 'grid grid-cols-1 gap-8';
+    contentDiv.className = 'grid grid-cols-1 gap-12';
     contentDiv.innerHTML = `
-        <div class="main-card p-4 md:p-12 rounded-3xl max-w-6xl mx-auto shadow-2xl">
-            <!-- 1. HERO SECTION -->
-            <div class="text-center mb-16 pt-8 pb-4 border-b border-indigo-100">
-                <h2 class="text-5xl md:text-6xl font-extrabold mb-4 leading-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-emerald-500">
-                    Precision Diagnosis, Powered by AI.
+        <!-- 1. HERO SECTION -->
+        <div class="main-card p-4 md:p-12 rounded-3xl mx-auto shadow-2xl overflow-hidden relative">
+            
+            <div class="absolute inset-0 bg-gradient-to-br from-[#4A90E2] to-indigo-400 opacity-10 rounded-3xl z-0"></div>
+            
+            <div class="text-center pt-8 pb-10 relative z-10">
+                <h2 class="text-5xl md:text-7xl font-extrabold mb-4 leading-snug bg-clip-text text-transparent bg-gradient-to-r from-gray-800 to-indigo-600">
+                    Precision Health. Transparent AI.
                 </h2>
-                <p class="text-xl text-gray-500 max-w-3xl mx-auto">
-                    The Healthcare Diagnosis Assistant integrates Deep Learning with Explainable AI (XAI) to elevate clinical decision support.
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    A revolutionary assistant combining Deep Learning with Explainable AI for rapid, trustworthy diagnostics.
                 </p>
-            </div>
-            
-            <!-- 2. CORE METRICS / VALUE PROPS (Interactive Cards) -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
-                <!-- Metric 1 -->
-                <div class="bg-indigo-50 p-6 rounded-xl text-center shadow-lg transition-all duration-300 transform hover:translate-y-[-5px] hover:shadow-2xl">
-                    <span class="text-5xl font-extrabold text-indigo-700 block">95%+</span>
-                    <p class="text-lg font-semibold mt-2 text-gray-800">Simulated Accuracy</p>
-                    <p class="text-sm text-gray-500 mt-1">High-confidence predictions with ResNet-50 and XGBoost models.</p>
-                </div>
-                <!-- Metric 2 -->
-                <div class="bg-emerald-50 p-6 rounded-xl text-center shadow-lg transition-all duration-300 transform hover:translate-y-[-5px] hover:shadow-2xl">
-                    <span class="text-5xl font-extrabold text-emerald-700 block">5X</span>
-                    <p class="text-lg font-semibold mt-2 text-gray-800">Faster Analysis</p>
-                    <p class="text-sm text-gray-500 mt-1">Real-time processing of complex medical images and signals.</p>
-                </div>
-                <!-- Metric 3 -->
-                <div class="bg-blue-50 p-6 rounded-xl text-center shadow-lg transition-all duration-300 transform hover:translate-y-[-5px] hover:shadow-2xl">
-                    <span class="text-5xl font-extrabold text-blue-700 block">100%</span>
-                    <p class="text-lg font-semibold mt-2 text-gray-800">Model Transparency</p>
-                    <p class="text-sm text-gray-500 mt-1">Explainable AI (XAI) provides verifiable reasoning for every result.</p>
-                </div>
-            </div>
-
-            <!-- 3. HOW IT WORKS (Infographic Style) -->
-            <div class="mb-16">
-                <h3 class="text-3xl font-bold text-center mb-10 text-gray-800">The Diagnostic Workflow</h3>
-                <div class="flex flex-col lg:flex-row justify-between items-stretch space-y-8 lg:space-y-0 lg:space-x-8">
-                    
-                    <!-- Step 1: Data Acquisition -->
-                    <div class="flex flex-col items-center text-center p-4 main-card rounded-xl hover:shadow-xl transition-shadow duration-300">
-                        <div class="bg-indigo-200 p-4 rounded-full mb-3">
-                            <svg class="w-8 h-8 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 16m-2-2L4 16m0 0h16"></path></svg>
-                        </div>
-                        <h4 class="font-semibold text-lg text-gray-800">1. Data Upload</h4>
-                        <p class="text-sm text-gray-500">Upload medical images (X-ray, CT) or physiological signals (ECG data).</p>
-                    </div>
-
-                    <!-- Arrow/Separator -->
-                    <div class="hidden lg:flex items-center justify-center">
-                        <svg class="w-6 h-6 text-gray-400 transform rotate-90 lg:rotate-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path></svg>
-                    </div>
-                    
-                    <!-- Step 2: AI Inference -->
-                    <div class="flex flex-col items-center text-center p-4 main-card rounded-xl hover:shadow-xl transition-shadow duration-300">
-                        <div class="bg-purple-200 p-4 rounded-full mb-3">
-                            <svg class="w-8 h-8 text-purple-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.27a11.97 11.97 0 013.297.803 2.1 2.1 0 01-1.464 2.887 11.97 11.97 0 01-11.233-12.016 2.1 2.1 0 012.887-1.464c1.03-.687 2.146-1.03 3.32-.803"></path></svg>
-                        </div>
-                        <h4 class="font-semibold text-lg text-gray-800">2. AI Processing</h4>
-                        <p class="text-sm text-gray-500">Dedicated models (ResNet-50 for Image, XGBoost for ECG) generate a diagnostic probability.</p>
-                    </div>
-
-                    <!-- Arrow/Separator -->
-                    <div class="hidden lg:flex items-center justify-center">
-                        <svg class="w-6 h-6 text-gray-400 transform rotate-90 lg:rotate-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path></svg>
-                    </div>
-
-                    <!-- Step 3: XAI Explanation -->
-                    <div class="flex flex-col items-center text-center p-4 main-card rounded-xl hover:shadow-xl transition-shadow duration-300">
-                        <div class="bg-red-200 p-4 rounded-full mb-3">
-                            <svg class="w-8 h-8 text-red-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0014.586 3H7a2 2 0 00-2 2v11m-1 4h10a2 2 0 012 2v2M8 12h8m-4 4h4"></path></svg>
-                        </div>
-                        <h4 class="font-semibold text-lg text-gray-800">3. XAI Generation</h4>
-                        <p class="text-sm text-gray-500">Grad-CAM/SHAP visualizations are created to explain the model's decision-making process.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 4. CALL TO ACTION -->
-            <div class="bg-gradient-to-r from-emerald-500 to-green-600 p-8 md:p-12 rounded-2xl text-center text-white shadow-2xl">
-                <h3 class="text-4xl font-bold mb-3">Ready to Analyze Patient Data?</h3>
-                <p class="text-lg mb-6">Explore the full capabilities of the AI Diagnosis Dashboard now.</p>
-                <button class="bg-white text-emerald-600 hover:bg-gray-100 font-bold text-xl py-4 px-10 rounded-xl shadow-2xl transition duration-300 transform hover:scale-[1.05]" onclick="navigateTo('home')">
-                    Go to Dashboard
+                <button class="mt-8 bg-[#36C2A3] hover:bg-emerald-600 text-white font-bold text-xl py-4 px-12 rounded-full shadow-xl transition duration-300 transform hover:scale-105 hover:ring-4 hover:ring-[#36C2A3]/50" onclick="navigateTo('home')">
+                    Start Diagnosis Now <i class="ph ph-arrow-right ml-2"></i>
                 </button>
             </div>
+            
+            <!-- Doctor/AI Interface Illustration Placeholder (More prominent) -->
+            <div class="w-full h-64 bg-gray-200 rounded-xl mx-auto mt-6 mb-4 flex items-center justify-center text-gray-500 text-sm border-2 border-dashed border-gray-400">
+                 [Image of a Doctor and an AI interface illustration]
+            </div>
+        </div>
+
+        <!-- 2. CORE FEATURES SECTION (Icon Grid with Animation) -->
+        <div class="max-w-6xl mx-auto">
+            <h3 class="text-3xl font-bold text-center mb-10 text-gray-800">Our Core Innovations</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                ${renderCoreFeatureCard('Transparent XAI', 'ph-magnifying-glass-plus', 'Every result comes with a visual explanation (Grad-CAM/SHAP) so you know *why* the AI decided.', COLORS.primary)}
+                ${renderCoreFeatureCard('Multi-Modal Analysis', 'ph-chart-line', 'Analyzes X-ray, CT, MRI (ResNet-50) and ECG data (XGBoost) for comprehensive insights.', COLORS.secondary)}
+                ${renderCoreFeatureCard('Patient Empowerment', 'ph-file-text', 'Clear, simplified reports and guided care tips for better patient understanding and outcomes.', COLORS.accent)}
+            </div>
+        </div>
+        
+        <!-- 3. TRUST & RELIABILITY BAR -->
+        <div class="bg-gray-100 py-10 rounded-2xl max-w-6xl mx-auto">
+            <h3 class="text-3xl font-bold text-center mb-8 text-gray-800">Commitment to Clinical Trust</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 px-4 text-center">
+                ${renderTrustSignal('Certified Data', 'ph-scroll', 'Supported by verified medical datasets.', '#00A86B')}
+                ${renderTrustSignal('Physician Vetting', 'ph-user-md', 'Models refined based on clinical feedback.', COLORS.primary)}
+                ${renderTrustSignal('Data Privacy', 'ph-lock-simple', 'HIPAA/GDPR compliant principles applied.', '#F08080')}
+                ${renderTrustSignal('XAI Integration', 'ph-eye', 'Built-in model transparency.', COLORS.secondary)}
+            </div>
+        </div>
+        
+        <!-- 4. FINAL CTA -->
+        <div class="bg-gradient-to-r from-[#4A90E2] to-indigo-500 p-8 md:p-12 rounded-2xl text-center text-white shadow-2xl mb-12">
+            <h3 class="text-4xl font-bold mb-3">Begin Your Diagnostic Journey</h3>
+            <p class="text-lg mb-6 opacity-90">Start the simple, step-by-step symptom check now and get instant AI analysis.</p>
+            <button class="bg-white text-[#4A90E2] hover:bg-gray-100 font-bold text-xl py-4 px-10 rounded-full shadow-2xl transition duration-300 transform hover:scale-[1.05]" onclick="navigateTo('home')">
+                Start Diagnosis
+            </button>
         </div>
     `;
 }
 
 /**
- * Renders the Doctor Dashboard (Diagnosis Page).
+ * Renders an attractive core feature card.
  */
-function renderDashboard() {
-    contentDiv.className = 'grid grid-cols-1 lg:grid-cols-3 gap-8';
+function renderCoreFeatureCard(title, iconClass, description, color) {
+    return `
+        <div class="p-8 main-card rounded-xl shadow-lg transition-all duration-300 transform hover:translate-y-[-8px] hover:shadow-2xl cursor-default border-b-4 border-[${color}]">
+            <i class="ph ${iconClass} text-5xl mb-4 p-3 rounded-xl block" style="color: white; background-color: ${color}; box-shadow: 0 4px 10px ${color}80;"></i>
+            <h4 class="font-bold text-xl text-gray-800 mb-2">${title}</h4>
+            <p class="text-sm text-gray-600">${description}</p>
+        </div>
+    `;
+}
+
+/**
+ * Renders a small trust signal card.
+ */
+function renderTrustSignal(title, iconClass, description, color) {
+    return `
+        <div class="flex flex-col items-center p-4">
+            <i class="ph ${iconClass} text-3xl mb-2" style="color: ${color};"></i>
+            <h5 class="font-semibold text-gray-800 text-sm">${title}</h5>
+            <p class="text-xs text-gray-500 mt-1">${description}</p>
+        </div>
+    `;
+}
+
+/**
+ * Renders the Health Library Page.
+ */
+function renderHealthLibrary() {
+    contentDiv.className = 'py-4';
     contentDiv.innerHTML = `
-        <!-- 1. Data Input/Upload Card -->
-        <div class="lg:col-span-1 main-card p-6 rounded-xl h-fit sticky top-8">
-            <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">Diagnostic Input</h2>
-            <p class="text-sm text-gray-500 mb-6">Upload patient data for AI analysis.</p>
+        <div class="main-card p-10 rounded-xl shadow-2xl">
+            <h2 class="text-4xl font-bold mb-6 text-[#36C2A3]">Health Library: Core Medical Topics</h2>
+            <p class="mb-8 text-gray-600">Browse scientifically reviewed content and information about how our AI models (ResNet-50, XGBoost) use data.</p>
             
-            <form id="diagnosis-form" class="space-y-4">
-                
-                <!-- Data Type Selection -->
-                <div class="mb-4">
-                    <label for="data-type" class="block text-sm font-medium text-gray-700 mb-1">Select Data Type:</label>
-                    <select id="data-type" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
-                        <option value="image">Medical Imaging (X-ray, CT, MRI)</option>
-                        <option value="ecg">Physiological Data (ECG, structured features)</option>
-                    </select>
-                </div>
-
-                <!-- File Upload Input -->
-                <div class="mb-6">
-                    <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-1">Upload File:</label>
-                    <input type="file" id="file-upload" accept="image/*" class="w-full text-sm text-gray-500
-                        file:mr-4 file:py-2 file:px-4
-                        file:rounded-full file:border-0
-                        file:text-sm file:font-semibold
-                        file:bg-indigo-50 file:text-indigo-700
-                        hover:file:bg-indigo-100 transition duration-150
-                    "/>
-                    <p id="file-status" class="mt-1 text-xs text-gray-400">Please select an image file (e.g., JPEG, PNG) for X-ray/CT analysis.</p>
-                </div>
-
-
-                <button type="submit" id="diagnose-btn" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-200 flex items-center justify-center transform hover:scale-[1.01]">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-                    Run AI Diagnosis
-                </button>
-            </form>
-
-            <div id="patient-info" class="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <h3 class="font-semibold text-sm mb-2 text-gray-700">Current Session Details:</h3>
-                <p class="text-gray-600 text-sm">Patient ID: <span id="patient-id-display" class="font-medium text-indigo-700">N/A</span></p>
-                <p class="text-gray-600 text-sm">Last Run: <span id="last-run-display">N/A</span></p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                ${renderLibraryTopic('Cardiology', 'ph-heart', 'Focus on ECG analysis via XGBoost and heart conditions.', COLORS.primary)}
+                ${renderLibraryTopic('Pulmonology', 'ph-lungs', 'Deep learning applications (ResNet-50) for X-ray analysis of lung diseases.', COLORS.secondary)}
+                ${renderLibraryTopic('Oncology', 'ph-brain', 'Tumor detection in CT/MRI scans.', '#FF6600')}
+                ${renderLibraryTopic('Explainable AI (XAI)', 'ph-lightbulb', 'Understanding Grad-CAM and SHAP in diagnostic transparency.', COLORS.accent)}
+            </div>
+            <div class="mt-8 text-center">
+                <span class="text-sm italic text-gray-500">All content adheres to "Reviewed by Experts" standards.</span>
             </div>
         </div>
+    `;
+}
 
-        <!-- 2. Diagnosis and Visualization Card (Large) -->
-        <div class="lg:col-span-2 main-card p-6 rounded-xl">
-            <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">Model Diagnosis & Explainability (XAI)</h2>
-            
-            <div id="diagnosis-area" class="min-h-[400px] flex items-center justify-center bg-gray-100 rounded-xl border-4 border-dashed border-gray-300">
-                <p class="text-gray-500 font-medium text-lg">Upload data and click "Run AI Diagnosis" to begin.</p>
+function renderLibraryTopic(title, iconClass, fact, color) {
+    return `
+        <div class="main-card p-6 rounded-xl border border-gray-200 hover:shadow-lg transition duration-300 flex items-start space-x-4">
+            <i class="ph ${iconClass} text-4xl flex-shrink-0" style="color: ${color};"></i>
+            <div>
+                <h4 class="font-bold text-xl text-gray-800">${title}</h4>
+                <p class="text-sm text-gray-600">${fact}</p>
+                <button class="text-sm text-indigo-500 font-semibold mt-2" onclick="showModal('${title}','This modal would display a full article on ${title}, reinforcing trust and medical accuracy.')">View Details</button>
             </div>
+        </div>
+    `;
+}
 
-            <div id="xai-details" class="mt-6 p-4 rounded-xl border-l-4 border-indigo-300 bg-indigo-50 hidden">
-                <h3 class="font-bold text-lg mb-2 text-indigo-700">XAI Interpretation:</h3>
-                <div class="flex flex-col md:flex-row md:items-center justify-between">
-                    <p id="explanation-text" class="text-gray-700 md:w-3/4"></p>
-                    <div class="mt-3 md:mt-0">
-                        <span id="confidence-badge" class="px-4 py-2 text-sm font-bold rounded-full shadow-lg"></span>
+// --- DIAGNOSIS WIZARD (Steps 1, 2, 3) ---
+
+function getWizardProgressHTML() {
+    const steps = [
+        { num: 1, name: 'Symptoms' },
+        { num: 2, name: 'Severity Check' },
+        { num: 3, name: 'Additional Questions' },
+        { num: 4, name: 'Diagnosis Results' }
+    ];
+
+    return `
+        <div class="flex justify-between items-center mb-8 border-b pb-4">
+            ${steps.map(step => `
+                <div class="flex flex-col items-center flex-grow">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white transition-all duration-500 
+                        ${step.num === wizardStep ? 'bg-[#4A90E2] scale-110' : (step.num < wizardStep ? 'bg-[#36C2A3]' : 'bg-gray-400')}">
+                        ${step.num}
                     </div>
+                    <span class="text-xs mt-2 font-semibold text-center ${step.num <= wizardStep ? 'text-gray-800' : 'text-gray-500'}">${step.name}</span>
                 </div>
-            </div>
+            `).join('')}
+        </div>
+    `;
+}
 
-            <div class="mt-6 flex justify-end">
-                <button id="save-report-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-xl transition duration-200 hidden transform hover:scale-[1.01]" onclick="navigateTo('report')">
-                    Generate Patient Report
+function renderDiagnosisWizard() {
+    contentDiv.className = 'py-4';
+    const diagnosisCardHTML = `
+        <div class="main-card p-6 md:p-10 rounded-xl shadow-2xl max-w-3xl mx-auto">
+            ${getWizardProgressHTML()}
+            <h2 class="text-2xl font-bold mb-6 text-gray-800">${getWizardTitle()}</h2>
+            <div id="wizard-content" class="min-h-[300px]">
+                ${getWizardStepContent()}
+            </div>
+            <div class="flex justify-between mt-8 pt-4 border-t">
+                <button id="wizard-back-btn" class="bg-gray-300 text-gray-700 font-bold py-2 px-6 rounded-lg transition duration-200" onclick="nextWizardStep(-1)" ${wizardStep === 1 ? 'disabled' : ''}>
+                    <i class="ph ph-arrow-left mr-2"></i> Back
+                </button>
+                <button id="wizard-next-btn" class="bg-[#36C2A3] hover:bg-emerald-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200" onclick="nextWizardStep(1)">
+                    ${wizardStep === 3 ? 'Get Diagnosis <i class="ph ph-rocket-launch ml-2"></i>' : 'Next Step <i class="ph ph-arrow-right ml-2"></i>'}
                 </button>
             </div>
         </div>
     `;
-    attachDashboardListeners();
+    contentDiv.innerHTML = diagnosisCardHTML;
+    attachWizardListeners();
 }
 
-/**
- * Renders the Patient Report Page. (No change to content needed here)
- */
+function getWizardTitle() {
+    switch(wizardStep) {
+        case 1: return "Step 1: Primary Symptoms";
+        case 2: return "Step 2: Check Severity (1-10)";
+        case 3: return "Step 3: Confirm Additional Details";
+        default: return "Diagnosis Wizard";
+    }
+}
+
+function getWizardStepContent() {
+    switch(wizardStep) {
+        case 1: 
+            // Step 1: Symptoms (Multi-select pills)
+            return `
+                <p class="mb-6 text-gray-600">Select all symptoms you are currently experiencing.</p>
+                <div class="flex flex-wrap gap-3">
+                    ${SUGGESTED_SYMPTOMS.map(s => 
+                        `<span class="pill-chip ${diagnosisData.symptoms.includes(s) ? 'selected' : ''}" 
+                              onclick="toggleSymptom('${s}')">${s}</span>`
+                    ).join('')}
+                </div>
+                <div class="mt-8 p-4 bg-indigo-50 border-l-4 border-[#4A90E2] rounded-lg">
+                    <i class="ph ph-info text-[#4A90E2] mr-2"></i>
+                    <span class="text-sm text-gray-700 font-semibold">Medical Reliability Indicator:</span> Focus on the primary discomforts first.
+                </div>
+            `;
+        case 2:
+            // Step 2: Severity Check (Slider)
+            const severity = diagnosisData.severity;
+            return `
+                <p class="mb-6 text-gray-600">On a scale of 1 to 10, how severe is your primary discomfort?</p>
+                <div class="p-4 bg-gray-100 rounded-xl">
+                    <input type="range" id="severity-slider" min="1" max="10" value="${severity}" class="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer range-lg">
+                    <div class="flex justify-between text-sm mt-2 font-medium">
+                        <span>1 (Mild)</span>
+                        <span>${severity} <span id="severity-display" class="font-bold text-[#4A90E2]">/ 10</span></span>
+                        <span>10 (Severe)</span>
+                    </div>
+                </div>
+                <div class="mt-8 p-4 bg-emerald-50 border-l-4 border-[#36C2A3] rounded-lg">
+                    <i class="ph ph-medal text-[#36C2A3] mr-2"></i>
+                    <span class="text-sm text-gray-700 font-semibold">Supported by Certified Medical Data:</span> Severity is key in differentiating minor ailments from serious conditions.
+                </div>
+            `;
+        case 3:
+            // Step 3: Additional Questions (Yes/No chips)
+            return `
+                <p class="mb-6 text-gray-600">Answer these quick questions to refine the AI's understanding.</p>
+                <div class="space-y-4">
+                    ${WIZARD_QUESTIONS.map(q => `
+                        <div class="main-card p-4 rounded-lg shadow-sm flex justify-between items-center">
+                            <span class="text-gray-700 font-medium">${q.text}</span>
+                            <div class="flex space-x-2">
+                                <button class="px-4 py-2 rounded-full font-semibold transition duration-150 ${diagnosisData.additional[q.key] === true ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-700'}" 
+                                        onclick="setAdditionalAnswer('${q.key}', true)">Yes</button>
+                                <button class="px-4 py-2 rounded-full font-semibold transition duration-150 ${diagnosisData.additional[q.key] === false ? 'bg-[#36C2A3] text-white' : 'bg-gray-200 text-gray-700'}" 
+                                        onclick="setAdditionalAnswer('${q.key}', false)">No</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        default: return "";
+    }
+}
+
+function attachWizardListeners() {
+    if (wizardStep === 2) {
+        const slider = document.getElementById('severity-slider');
+        const display = document.getElementById('severity-display');
+        slider.addEventListener('input', (e) => {
+            diagnosisData.severity = parseInt(e.target.value);
+            display.textContent = ` / 10`;
+            slider.parentElement.querySelector('span:nth-child(2)').innerHTML = `${e.target.value} <span id="severity-display" class="font-bold text-[#4A90E2]">/ 10</span>`;
+        });
+    }
+}
+
+function toggleSymptom(symptom) {
+    const index = diagnosisData.symptoms.indexOf(symptom);
+    if (index > -1) {
+        diagnosisData.symptoms.splice(index, 1);
+    } else {
+        diagnosisData.symptoms.push(symptom);
+    }
+    renderDiagnosisWizard(); // Re-render to update chips
+}
+
+function setAdditionalAnswer(key, value) {
+    diagnosisData.additional[key] = value;
+    renderDiagnosisWizard(); // Re-render to update chips
+}
+
+function nextWizardStep(direction) {
+    if (direction > 0) {
+        // Validation before moving forward
+        if (wizardStep === 1 && diagnosisData.symptoms.length === 0) {
+            showModal('Missing Input', 'Please select at least one primary symptom before proceeding.', 'error');
+            return;
+        }
+        if (wizardStep === 3) {
+            // Final step before diagnosis
+            runDiagnosisSimulation();
+            return;
+        }
+    }
+
+    // Move step
+    wizardStep = Math.min(4, Math.max(1, wizardStep + direction));
+    renderDiagnosisWizard();
+}
+
+function runDiagnosisSimulation() {
+    // 1. Simulate ML model based on data
+    const severityFactor = diagnosisData.severity / 10;
+    const additionalFactor = Object.values(diagnosisData.additional).filter(v => v).length;
+
+    // Simulate confidence based on input (Higher severity/more symptoms = more likely to be positive)
+    let baseConfidence = 0.75;
+    if (severityFactor > 0.7 && diagnosisData.symptoms.length >= 2) {
+        baseConfidence = 0.90; // High suspicion
+    }
+
+    const confidence = (Math.random() * (0.05) + baseConfidence) * 100;
+    const isPositive = confidence > 82; // Threshold
+
+    const primarySymptom = diagnosisData.symptoms[0] || 'Unspecified Ailment';
+
+    diagnosisResult = {
+        timestamp: new Date().toLocaleTimeString(),
+        patientId: 'P' + Math.floor(Math.random() * 9000 + 1000),
+        dataType: 'Symptom Input',
+        diagnosis: isPositive ? `${primarySymptom} Syndrome/Infection` : `Common Cold/Viral Infection`,
+        confidence: confidence.toFixed(1) + '%',
+        explanation: `The AI weighted the high severity score (${diagnosisData.severity}/10) and the presence of ${diagnosisData.symptoms.length} symptoms heavily. The XGBoost component identified a high correlation with [Condition Details].`,
+        isPositive: isPositive,
+        // Detailed data for display
+        primarySymptom: primarySymptom
+    };
+
+    // 2. Navigate to results page
+    navigateTo('results');
+}
+
+// --- RESULTS PAGE ---
+
+function renderResultsPage() {
+    contentDiv.className = 'py-4';
+    if (!diagnosisResult) {
+        // Safety check if user jumps directly
+        contentDiv.innerHTML = `<div class="main-card p-10 rounded-xl text-center shadow-xl"><h2 class="text-3xl font-bold text-gray-800">Please start a diagnosis first.</h2></div>`;
+        return;
+    }
+
+    const isHighRisk = parseFloat(diagnosisResult.confidence) > 85;
+
+    contentDiv.innerHTML = `
+        <div class="main-card p-6 md:p-10 rounded-xl shadow-2xl max-w-4xl mx-auto">
+            <h2 class="text-3xl font-bold mb-4 text-gray-800 border-b pb-2">Diagnosis Results</h2>
+
+            <!-- Primary Diagnosis Card -->
+            <div class="p-6 rounded-xl mb-8 ${isHighRisk ? 'bg-red-50 border-l-8 border-red-500' : 'bg-emerald-50 border-l-8 border-[#36C2A3]'} shadow-md">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-2xl font-bold ${isHighRisk ? 'text-red-700' : 'text-emerald-700'} mb-1">
+                            ${diagnosisResult.diagnosis}
+                        </h3>
+                        <p class="text-sm text-gray-600">Based on ${diagnosisResult.primarySymptom} and additional input.</p>
+                    </div>
+                    <i class="ph ph-heartbeat text-5xl opacity-40 ${isHighRisk ? 'text-red-500' : 'text-[#36C2A3]'}"></i>
+                </div>
+                
+                <div class="mt-4 p-3 bg-white rounded-lg border flex items-center justify-between">
+                    <span class="text-lg font-bold text-gray-800">Confidence Level:</span>
+                    <span class="text-xl font-extrabold ${isHighRisk ? 'text-red-600' : 'text-[#36C2A3]'}">
+                        ${diagnosisResult.confidence} match
+                    </span>
+                </div>
+
+                <!-- Consultation Recommended Badge -->
+                ${isHighRisk ? `
+                    <div class="mt-4 p-3 bg-red-100 rounded-lg flex items-center space-x-2">
+                        <i class="ph ph-user-md text-red-700 text-xl"></i>
+                        <span class="font-semibold text-red-700">Doctor Icon: Immediate professional consultation highly recommended.</span>
+                    </div>
+                ` : `
+                    <div class="mt-4 p-3 bg-indigo-100 rounded-lg flex items-center space-x-2">
+                        <i class="ph ph-check-circle text-[#4A90E2] text-xl"></i>
+                        <span class="font-semibold text-[#4A90E2]">Initial check complete. Use Care Tips or consult AI Assistant.</span>
+                    </div>
+                `}
+            </div>
+            
+            <!-- Secondary Possibilities (Accordion) -->
+            <h3 class="text-xl font-bold mb-3 text-gray-800">Alternative Possibilities</h3>
+            <div id="accordion-container" class="space-y-3">
+                ${renderSecondaryPossibility('Possibility A: Flu-like Illness', 'Common flu can mimic initial symptoms. Check for body aches and congestion.', ['Body Aches', 'High Fever'])}
+                ${renderSecondaryPossibility('Possibility B: Musculoskeletal Strain', 'If pain is localized, it might be due to a muscle or joint strain.', ['Localized Pain', 'Recent Activity'])}
+            </div>
+
+            <div class="mt-8 p-4 bg-gray-100 border-l-4 border-gray-300 rounded-lg">
+                <h4 class="font-bold text-gray-700 mb-2">AI Explanation (XAI Insight)</h4>
+                <p class="text-sm text-gray-600">${diagnosisResult.explanation}</p>
+                <a href="#" class="text-sm text-indigo-500 font-semibold mt-2 block" onclick="showModal('XAI Deep Dive','The AI uses algorithms like XGBoost and ResNet-50. XGBoost analyzes structured symptom data by building a series of decision trees to correct errors iteratively, providing high accuracy on discrete features.')">How our AI works <i class="ph ph-link-simple ml-1"></i></a>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <button class="action-btn bg-yellow-500 hover:bg-yellow-600" onclick="showModal('Care Tips','Stay hydrated, rest, and monitor temperature. Consult a doctor if symptoms worsen.')">
+                    <i class="ph ph-first-aid-kit-fill"></i> Get Care Tips
+                </button>
+                <button class="action-btn bg-[#4A90E2] hover:bg-blue-600" onclick="toggleChat(true)">
+                    <i class="ph ph-chats-circle-fill"></i> Talk to AI Assistant
+                </button>
+                <button class="action-btn bg-indigo-500 hover:bg-indigo-600" onclick="showModal('Find Doctor','Feature not active: This would integrate with a geo-location service to find nearby physicians/hospitals.')">
+                    <i class="ph ph-map-pin-fill"></i> Find Doctor
+                </button>
+                <button class="action-btn bg-gray-700 hover:bg-gray-800" onclick="navigateTo('report')">
+                    <i class="ph ph-download-simple-fill"></i> Download Report
+                </button>
+            </div>
+        </div>
+    `;
+
+    // Attach click listeners for accordion (simplified)
+    document.querySelectorAll('.accordion-header').forEach(header => {
+        header.addEventListener('click', function() {
+            const content = this.nextElementSibling;
+            content.classList.toggle('hidden');
+            this.querySelector('i').classList.toggle('ph-caret-down');
+            this.querySelector('i').classList.toggle('ph-caret-up');
+        });
+    });
+}
+
+function renderSecondaryPossibility(title, fact, redFlags) {
+    return `
+        <div class="main-card rounded-lg border overflow-hidden">
+            <div class="accordion-header p-4 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100">
+                <span class="font-semibold text-gray-800">${title}</span>
+                <i class="ph ph-caret-down text-xl text-gray-500 transition-transform duration-300"></i>
+            </div>
+            <div class="accordion-content p-4 hidden">
+                <p class="text-sm text-gray-600 mb-3">**Short Medical Fact:** ${fact}</p>
+                <div class="text-xs font-semibold text-red-600">
+                    Red Flags: ${redFlags.join(', ')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// --- REPORT PAGE (Only a simple placeholder for now) ---
+
 function renderPatientReport() {
-    contentDiv.className = 'grid grid-cols-1 gap-8';
+    contentDiv.className = 'py-4';
     
     let reportContent;
     if (diagnosisResult) {
@@ -272,8 +568,8 @@ function renderPatientReport() {
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-lg mb-8 p-4 bg-gray-50 rounded-lg">
                     <p><strong>Patient ID:</strong> <span class="text-indigo-700">${diagnosisResult.patientId}</span></p>
                     <p><strong>Diagnosis Time:</strong> ${diagnosisResult.timestamp}</p>
-                    <p><strong>Data Analyzed:</strong> <span class="font-medium">${diagnosisResult.dataType === 'image' ? 'Medical Imaging (X-ray/CT)' : 'Physiological Data (ECG)'}</span></p>
-                    <p><strong>AI Model Used:</strong> ${diagnosisResult.dataType === 'image' ? 'ResNet-50' : 'XGBoost'}</p>
+                    <p><strong>Data Analyzed:</strong> <span class="font-medium">${diagnosisResult.dataType}</span></p>
+                    <p><strong>AI Model Used:</strong> Symptom-driven (XGBoost logic simulation)</p>
                 </div>
 
                 <div class="p-6 rounded-xl mb-8 border-l-8 ${diagnosisResult.isPositive ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'} shadow-md">
@@ -283,7 +579,7 @@ function renderPatientReport() {
                 </div>
                 
                 <h3 class="text-xl font-bold mt-8 mb-4 border-b pb-2 text-gray-800">Interpretation (Simplified for Patient)</h3>
-                <p class="text-gray-700 leading-relaxed mb-8">The Artificial Intelligence Assistant analyzed your data and suggests the following finding: ${isPositiveText}. **It is crucial to remember that this is an aid, and the final diagnosis and treatment plan must come from your attending physician.**</p>
+                <p class="text-gray-700 leading-relaxed mb-8">The Artificial Intelligence Assistant analyzed your input and suggests the following finding: ${isPositiveText}. **It is crucial to remember that this is an aid, and the final diagnosis and treatment plan must come from your attending physician.**</p>
 
                 <h3 class="text-xl font-bold mb-4 border-b pb-2 text-gray-800">Explainable AI (XAI) Insight</h3>
                 <div class="mt-4 p-4 bg-gray-100 rounded-lg border border-gray-300">
@@ -296,7 +592,7 @@ function renderPatientReport() {
                         Print/Download PDF
                     </button>
                     <button class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg transition duration-200 shadow-lg transform hover:scale-[1.01]" onclick="navigateTo('home')">
-                        Back to Dashboard
+                        Start New Diagnosis
                     </button>
                 </div>
             </div>
@@ -304,10 +600,10 @@ function renderPatientReport() {
     } else {
         reportContent = `
             <div class="p-8 main-card rounded-xl text-center max-w-xl mx-auto shadow-xl">
-                <h3 class="text-2xl font-semibold text-gray-800 mb-4">No Data Available</h3>
-                <p class="text-lg text-gray-500">Please run a diagnostic analysis from the Dashboard first to generate a patient report.</p>
+                <h3 class="text-2xl font-semibold text-gray-800 mb-4">No Diagnosis Run</h3>
+                <p class="text-lg text-gray-500">Please complete the step-by-step symptom check on the Diagnosis page first.</p>
                 <button class="mt-6 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 shadow-md transform hover:scale-[1.01]" onclick="navigateTo('home')">
-                    Go to Dashboard
+                    Go to Diagnosis
                 </button>
             </div>
         `;
@@ -315,166 +611,130 @@ function renderPatientReport() {
     contentDiv.innerHTML = reportContent;
 }
 
-/**
- * Handles navigation, updates active links, and renders the correct page.
- * @param {string} page - The page to navigate to ('info', 'home', or 'report').
- */
-function navigateTo(page) {
-    // 1. Update navigation bar active state
-    navLinks.forEach(link => {
-        if (link.dataset.page === page) {
-            link.classList.add('active');
-        } else {
-            link.classList.remove('active');
-        }
+
+// --- AI CHAT UI ---
+
+function renderChatUI() {
+    const isMobile = window.innerWidth < 768;
+    
+    // Header for the chat container
+    const chatHeader = `
+        <div class="flex items-center justify-between p-4 border-b bg-[#4A90E2] text-white rounded-t-xl">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center text-[#4A90E2] font-bold">
+                    <i class="ph ph-robot text-2xl"></i>
+                </div>
+                <div>
+                    <h4 class="font-bold">AI Health Assistant</h4>
+                    <span class="text-xs opacity-80">Online | Always ready to chat</span>
+                </div>
+            </div>
+            <button onclick="toggleChat(false)" class="text-white hover:text-gray-200">
+                <i class="ph ph-x text-2xl"></i>
+            </button>
+        </div>
+    `;
+
+    // Main chat history and input
+    const chatBody = `
+        <div id="chat-history" class="flex-grow p-4 overflow-y-auto space-y-3" style="height: ${isMobile ? 'calc(100vh - 200px)' : 'calc(100% - 150px)'};">
+            <!-- Messages go here -->
+            ${chatHistory.map(msg => `
+                <div class="flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}">
+                    <div class="chat-message ${msg.role === 'user' ? 'user-message' : 'ai-message'}">
+                        ${msg.text}
+                    </div>
+                </div>
+            `).join('')}
+            <div id="typing-indicator" class="ai-message w-10 h-5 hidden flex items-center">
+                <div class="animate-pulse w-2 h-2 bg-gray-500 rounded-full mx-0.5"></div>
+                <div class="animate-pulse w-2 h-2 bg-gray-500 rounded-full mx-0.5" style="animation-delay: 0.2s;"></div>
+                <div class="animate-pulse w-2 h-2 bg-gray-500 rounded-full mx-0.5" style="animation-delay: 0.4s;"></div>
+            </div>
+        </div>
+    `;
+
+    // Input area
+    const chatInput = `
+        <div class="p-4 border-t-2">
+            <div class="flex space-x-2 mb-3 overflow-x-auto">
+                <button class="text-xs px-3 py-1 bg-gray-200 rounded-full hover:bg-gray-300 transition" onclick="simulateChatResponse('What is the difference between flu and cold?')">Flu vs Cold?</button>
+                <button class="text-xs px-3 py-1 bg-gray-200 rounded-full hover:bg-gray-300 transition" onclick="simulateChatResponse('What are the red flags for chest pain?')">Red Flags?</button>
+            </div>
+            <div class="flex space-x-2">
+                <input type="text" id="chat-input" placeholder="Ask a health question..." class="flex-grow p-3 border border-gray-300 rounded-xl focus:ring-[#4A90E2] focus:border-[#4A90E2] outline-none">
+                <button id="send-btn" class="w-12 h-12 bg-[#36C2A3] text-white rounded-xl flex items-center justify-center hover:bg-emerald-600 transition duration-200">
+                    <i class="ph ph-paper-plane-right-fill text-xl"></i>
+                </button>
+            </div>
+        </div>
+    `;
+
+    chatContainer.innerHTML = chatHeader + chatBody + chatInput;
+    document.getElementById('send-btn').addEventListener('click', handleChatInput);
+    document.getElementById('chat-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleChatInput();
     });
 
-    // 2. Render the correct page content
-    if (page === 'info') {
-        renderInfoPage();
-    } else if (page === 'home') {
-        renderDashboard();
-    } else if (page === 'report') {
-        renderPatientReport();
+    // Initial AI greeting if history is empty
+    if (chatHistory.length === 0) {
+        simulateChatResponse("Hello! I'm your AI Health Assistant. How can I help with your symptoms or questions today?", 'ai');
     }
 }
 
-// --- EVENT LISTENERS (Dashboard) ---
+function handleChatInput() {
+    const input = document.getElementById('chat-input');
+    const userText = input.value.trim();
+    if (!userText) return;
 
-function attachDashboardListeners() {
-    const diagnosisForm = document.getElementById('diagnosis-form');
-    const fileInput = document.getElementById('file-upload');
-    const dataTypeSelect = document.getElementById('data-type');
-    const fileStatus = document.getElementById('file-status');
+    // Add user message
+    chatHistory.push({ role: 'user', text: userText });
+    input.value = '';
+    renderChatUI();
+    scrollToBottom();
 
-    // Display file name when selected
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) {
-            selectedFile = fileInput.files[0];
-            fileStatus.textContent = `File selected: ${selectedFile.name} (${(selectedFile.size / 1024 / 1024).toFixed(2)} MB)`;
-            fileStatus.classList.remove('text-gray-400');
-            fileStatus.classList.add('text-emerald-600', 'font-medium');
-        } else {
-            selectedFile = null;
-            fileStatus.textContent = 'Please select a file.';
-            fileStatus.classList.remove('text-emerald-600', 'font-medium');
-            fileStatus.classList.add('text-gray-400');
-        }
-    });
+    // Show typing indicator
+    document.getElementById('typing-indicator').classList.remove('hidden');
+    scrollToBottom();
 
-    // Adjust file acceptance based on data type selection
-    dataTypeSelect.addEventListener('change', () => {
-        if (dataTypeSelect.value === 'image') {
-            fileInput.setAttribute('accept', 'image/*');
-            fileStatus.textContent = 'Please select an image file (e.g., JPEG, PNG) for X-ray/CT analysis.';
-        } else {
-            fileInput.setAttribute('accept', '.csv');
-            fileStatus.textContent = 'Please select a CSV file for ECG/structured data analysis.';
-        }
-        // Clear previously selected file when changing type
-        fileInput.value = '';
-        selectedFile = null;
-        fileStatus.classList.remove('text-emerald-600', 'font-medium');
-        fileStatus.classList.add('text-gray-400');
-    });
-
-    // Event handler for diagnosis form submission
-    diagnosisForm.addEventListener('submit', (event) => {
-        event.preventDefault(); // Stop page reload
-
-        if (!selectedFile) {
-            showModal('Missing Data', 'Please select a file to run the AI diagnosis.', 'error');
-            return;
-        }
-
-        const dataType = dataTypeSelect.value;
-        
-        // DOM elements for results
-        const diagnoseArea = document.getElementById('diagnosis-area');
-        const xaiDetails = document.getElementById('xai-details');
-        const explanationText = document.getElementById('explanation-text');
-        const confidenceBadge = document.getElementById('confidence-badge');
-        const saveReportBtn = document.getElementById('save-report-btn');
-        const patientIdDisplay = document.getElementById('patient-id-display');
-        const lastRunDisplay = document.getElementById('last-run-display');
-
-        // Clear previous results and show loading
-        diagnoseArea.innerHTML = `
-            <div class="text-center p-4">
-                <div class="animate-spin rounded-full h-14 w-14 border-t-4 border-b-4 border-indigo-600 mx-auto"></div>
-                <p class="mt-4 text-indigo-700 font-semibold text-lg">Analyzing Data...</p>
-                <p class="text-sm text-gray-500">Running ${dataType === 'image' ? 'ResNet-50 (Deep Learning)' : 'XGBoost (Gradient Boosting)'} on ${selectedFile.name}.</p>
-            </div>
-        `;
-        xaiDetails.classList.add('hidden');
-        saveReportBtn.classList.add('hidden');
-        lastRunDisplay.textContent = 'Processing...';
-
-        // Simulate network latency/processing time
-        setTimeout(() => {
-            diagnosisResult = runDiagnosis(dataType);
-            
-            // Update session info
-            patientIdDisplay.textContent = diagnosisResult.patientId;
-            lastRunDisplay.textContent = diagnosisResult.timestamp;
-
-            let diagnosisHTML;
-
-            if (dataType === 'image') {
-                // Image Visualization (X-ray/CT)
-                const placeholderImage = "https://placehold.co/800x600/b0c4de/333333?text=X-RAY+SCAN+Simulated";
-                diagnosisHTML = `
-                    <div class="xai-overlay-container w-full h-full p-4">
-                        <!-- In a real app, this would be the uploaded image -->
-                        <img src="${placeholderImage}" onerror="this.onerror=null;this.src='https://placehold.co/800x600/b0c4de/333333?text=Image+Load+Error';" alt="Medical Scan" class="max-h-full max-w-full object-contain rounded-xl shadow-xl transition-all duration-500" />
-                        <div id="xai-overlay" class="xai-overlay ${diagnosisResult.isPositive ? 'active' : ''}"></div>
-                    </div>
-                `;
-            } else {
-                // ECG/Structured Data Visualization
-                diagnosisHTML = `
-                    <div class="w-full h-full flex flex-col items-center justify-center p-4 bg-white rounded-xl">
-                        <svg viewBox="0 0 100 20" class="w-full h-auto text-red-600 mb-4" fill="none" stroke="currentColor" stroke-width="0.3" style="max-height: 200px;">
-                            <polyline points="0,10 5,12 10,8 15,10 20,11 25,13 30,7 35,10 40,11 45,13 50,7 55,10 60,11 65,13 70,7 75,10 80,12 85,8 90,10 95,11 100,10" class="stroke-red-500"/>
-                        </svg>
-                        <p class="mt-4 text-center text-gray-700 font-medium">ECG Analysis Complete on ${selectedFile.name}.</p>
-                        <p class="text-sm text-gray-500">XGBoost successfully analyzed key physiological features.</p>
-                    </div>
-                `;
-            }
-            
-            diagnoseArea.innerHTML = diagnosisHTML;
-            
-            // Update XAI Details
-            explanationText.textContent = diagnosisResult.explanation;
-            confidenceBadge.textContent = diagnosisResult.diagnosis + ' (Conf: ' + diagnosisResult.confidence + ')';
-            
-            // Style the badge based on result
-            confidenceBadge.classList.remove('bg-emerald-100', 'text-emerald-700', 'bg-red-100', 'text-red-700');
-            if (diagnosisResult.isPositive) {
-                confidenceBadge.classList.add('bg-red-100', 'text-red-700');
-            } else {
-                confidenceBadge.classList.add('bg-emerald-100', 'text-emerald-700');
-            }
-
-            xaiDetails.classList.remove('hidden');
-            saveReportBtn.classList.remove('hidden');
-            
-            showModal('Diagnosis Complete', `AI Model predicted: ${diagnosisResult.diagnosis}`, diagnosisResult.isPositive ? 'error' : 'success');
-
-
-        }, 2500); // 2.5 second simulation time
-    });
+    // Simulate AI response after a delay
+    setTimeout(() => {
+        document.getElementById('typing-indicator').classList.add('hidden');
+        simulateChatResponse(`I understand you asked about "${userText}". As an AI, I suggest you consult a medical professional for a definite diagnosis. However, based on general knowledge, [Simulated AI Answer].`, 'ai');
+    }, 1500);
 }
+
+function simulateChatResponse(text, role = 'ai') {
+    chatHistory.push({ role: role, text: text });
+    renderChatUI();
+    scrollToBottom();
+}
+
+function scrollToBottom() {
+    const chatHistoryDiv = document.getElementById('chat-history');
+    if (chatHistoryDiv) {
+        chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+    }
+}
+
 
 // --- INITIALIZATION ---
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Attach navigation listeners
+    // Attach desktop navigation listeners
     navLinks.forEach(link => {
         link.addEventListener('click', (e) => navigateTo(e.target.dataset.page));
     });
     
+    // Attach mobile navigation listeners
+    mobileNavLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            if (e.target.dataset.page) {
+                navigateTo(e.target.dataset.page);
+            }
+        });
+    });
+
     // Attach modal close listener
     modalCloseBtn.addEventListener('click', closeModal);
 
